@@ -48,7 +48,7 @@ struct Resolution {
 
 // Temporal parameters
 struct Time {
-    double t0, tf, dt, tplt, tsave;
+    double t0, tf, dt_max, tplt, tsave;
 };
 
 struct Params {
@@ -78,7 +78,7 @@ Params load_params(const std::string& filename) {
     // Time
     p.time.t0     = config["time"]["t0"].value_or(0.0);
     p.time.tf     = config["time"]["tf"].value_or(200.0);
-    p.time.dt     = config["time"]["dt"].value_or(0.1);
+    p.time.dt_max = config["time"]["dt"].value_or(0.1);
     p.time.tplt   = config["time"]["tplt"].value_or(1.0);
     p.time.tsave  = config["time"]["tsave"].value_or(5.0);
 
@@ -159,9 +159,10 @@ int main(int argc, char** argv) {
   // Assign temporal parameters
   double t0 = p.time.t0;
   double tf = p.time.tf;
-  double dt = p.time.dt;
+  double dt_max = p.time.dt_max;
   double tplt = p.time.tplt;
   double tsave = p.time.tsave;
+  double dt = dt_max;
 
   // Diffusivities
   dT = p.dim.dT;
@@ -206,12 +207,12 @@ int main(int argc, char** argv) {
   int maxFluidSolverIterations = 10;
   
   // Preallocate time-stepping arrays
-  double* EulerOperator = (double*) malloc(N * N * N * sizeof(double));
-  double* SBDF2Operator = (double*) malloc(N * N * N * sizeof(double));
+  double* EulerOperator = new double[N * N * N];
+  double* SBDF2Operator = new double[N * N * N];
 
   // Preallocate wavenumber array
-  double* wavenumber = (double*) malloc(N * sizeof(double));
-  
+  double* wavenumber = new double[N];
+
   // Initialize array of Fourier modes
   for(int n = 0; n < N; n++){
     if(n <= N / 2) wavenumber[n] = 2.0 * pi * n / L;
@@ -239,52 +240,102 @@ int main(int argc, char** argv) {
   //  Initialize variables 
   //************************************************************ 
 
-  double* s = (double*) malloc(N * N * N * sizeof(double));
-  double* Umag = (double*) malloc(N * N * N * sizeof(double));
-
+  double* s = new double[N * N * N];
+  double* Umag = new double[N * N * N];
+  
   // Boolean indicator for symmetric tensor
   bool symmetric = true;
 
-  // Vectors
-  Vector U(Z), U_h(Z), Up1(Z), Up1_h(Z), bufferVector(Z);
+  // Initialize velocity
+  fftw_complex *u[3], *u_h[3], *up1[3], *up1_h[3], *buffer[3];
+  for(auto i = 0; i < 3; i++){
+    u[i]      = zeros(Z);
+    u_h[i]    = zeros(Z);
+    up1[i]    = zeros(Z);
+    up1_h[i]  = zeros(Z);
+    buffer[i] = zeros(Z);
+  }
 
-  // Tensors
-  Tensor gradU(Z, !symmetric);
+  // Initialize nematic tensor
+  fftw_complex *Q[3][3], *Q_h[3][3], *Qm1_h[3][3];
+  fftw_complex *F[3][3], *F_h[3][3], *Fm1_h[3][3];
+  fftw_complex *Sigma[3][3], *Sigma_h[3][3], *ST[3][3];
+  
+  for(auto i = 0; i < 3; i++){
+    for(auto j = i; j < 3; j++){
 
-  // Symmetric tensors
-  Tensor Q(Z, symmetric), Q_h(Z, symmetric), Qm1_h(Z, symmetric);
-  Tensor F(Z, symmetric), F_h(Z, symmetric), Fm1_h(Z, symmetric);
-  Tensor Sigma(Z, symmetric), Sigma_h(Z, symmetric), ST(Z, symmetric);
+      Q[i][j]     = zeros(Z);
+      Q_h[i][j]   = zeros(Z);
+      Qm1_h[i][j] = zeros(Z);
 
-  // Rank 3 tensors
-  Tensor3 gradQ(Z);
+      F[i][j]     = zeros(Z);
+      F_h[i][j]   = zeros(Z);
+      Fm1_h[i][j] = zeros(Z);
+
+      Sigma[i][j]   = zeros(Z);
+      Sigma_h[i][j] = zeros(Z);
+      ST[i][j]      = zeros(Z);
+      
+      if(i != j){
+        Q[j][i]     = Q[i][j];
+        Q_h[j][i]   = Q_h[i][j];
+        Qm1_h[j][i] = Qm1_h[i][j];
+        F[j][i]     = F[i][j];
+        F_h[j][i]   = F_h[i][j];
+        Fm1_h[j][i] = Fm1_h[i][j];
+        Sigma[j][i]   = Sigma[i][j];
+        Sigma_h[j][i] = Sigma_h[i][j];
+        ST[j][i]      = ST[i][j];
+      }
+
+    }
+  }
+
+  fftw_complex* gradU[3][3];
+  for(auto i = 0; i < 3; i++){
+    for(auto j = 0; j < 3; j++){
+      gradU[i][j] = zeros(Z);
+    }
+  }
+
+  fftw_complex* gradQ[3][3][3];
+  for(auto i = 0; i < 3; i++){
+    for(auto j = i; j < 3; j++){
+      for(auto k = 0; k < 3; k++){
+        gradQ[i][j][k] = zeros(Z);
+        if(i != j){
+          gradQ[j][i][k] = gradQ[i][j][k];
+        }
+      }
+    }
+  }
 
   //************************************************************ 
   //  Function captures for velocity and nonlinearity
   //************************************************************ 
 
   // Closure for computing the fluid velocity
-  auto evaluateVelocity = [&](Tensor& Q, Vector& U) {
-    fluidSolver(U, U_h, Up1, Up1_h, Q, Q_h, Sigma, Sigma_h, ST, gradU, bufferVector, wavenumber, fluidSolverTolerance, maxFluidSolverIterations, fft);
+  auto evaluateVelocity = [&](fftw_complex* (&Q)[3][3], fftw_complex* (&u)[3]) {
+    fluidSolver(u, u_h, up1, up1_h, Q, Q_h, Sigma, Sigma_h, ST, gradU, buffer, wavenumber, fluidSolverTolerance, maxFluidSolverIterations, fft);
   };
 
   // Closure for evaluating nonlinear terms
-  auto evaluateNonlinearity = [&](Tensor& Q, Tensor& F) {
+  auto evaluateNonlinearity = [&](fftw_complex* (&Q)[3][3], fftw_complex* (&F)[3][3]) {
 
     // Solve for fluid velocity
-    evaluateVelocity(Q, U);
+    evaluateVelocity(Q, u);
 
     // Compute velocity gradient
-    grad(U, U_h, gradU, bufferVector, wavenumber, fft);
+    grad(u, u_h, gradU, buffer, wavenumber, fft);
 
     // Evaluate Bingham closure
     binghamClosure(ST, Q, gradU);
 
     // Compute nematic tensor gradient
-    grad(Q, Q_h, gradQ, bufferVector, wavenumber, fft);
+    grad(Q, Q_h, gradQ, buffer, wavenumber, fft);
 
     // Evaluate nonlinear terms
-    nonlinear(F, U, gradU, Q, gradQ, ST);
+    nonlinear(F, u, gradU, Q, gradQ, ST);
 
   };
 
@@ -311,19 +362,16 @@ int main(int argc, char** argv) {
     std::cout << "Initial data found, loading Q..." << std::endl;
 
     // Line counter
-    long idx = 0;
+    auto idx = 0;
 
     // Load
     while (Q_init >> q11 >> q12 >> q13 >> q22 >> q23 >> q33) {
 
       // Assign values
       if(idx < N * N * N){
-        Q.f11[idx][0] = q11;
-        Q.f12[idx][0] = q12;
-        Q.f13[idx][0] = q13;
-        Q.f22[idx][0] = q22;
-        Q.f23[idx][0] = q23;
-        Q.f33[idx][0] = q33;
+        Q[0][0][idx][0] = q11, Q[0][1][idx][0] = q12, Q[0][2][idx][0] = q13;
+        Q[1][1][idx][0] = q22, Q[1][2][idx][0] = q23;
+        Q[2][2][idx][0] = q33;
       }
 
       idx++;
@@ -345,20 +393,24 @@ int main(int argc, char** argv) {
 
     // Start with isotropic base state
     #pragma omp parallel for
-    for(long idx = 0; idx < N * N * N; idx++){
-      Q.f11[idx][0] = 1.0 / 3.0;
-      Q.f22[idx][0] = 1.0 / 3.0;
-      Q.f33[idx][0] = 1.0 / 3.0;
+    for(auto idx = 0; idx < N * N * N; idx++){
+      Q[0][0][idx][0] = 1.0 / 3.0;
+      Q[1][1][idx][0] = 1.0 / 3.0;
+      Q[2][2][idx][0] = 1.0 / 3.0;
     }
 
     // Apply plane wave perturbation
-    perturbation(Q.f11, wavenumber);
-    perturbation(Q.f12, wavenumber);
-    perturbation(Q.f13, wavenumber);
-    perturbation(Q.f22, wavenumber);
-    perturbation(Q.f23, wavenumber);
-    perturbation(Q.f33, wavenumber);
+    for(auto i = 0; i < 3; i++){
+      for(auto j = i; j < 3; j++){
+        perturbation(Q[i][j], wavenumber);
 
+        if(i != j){
+          Q[j][i] = Q[i][j];
+        }
+
+      }
+    }
+    
   }
 
   // Enfore trace condition on Q
@@ -375,18 +427,18 @@ int main(int argc, char** argv) {
   nematicOrderParameter(Q, s); 
   filename = outputDirectory + "/s/s-" + std::to_string(nplt) + ".dat"; 
   writeField(filename, s, plotPrecision);      
-  
-  // Velocity field
-  evaluateVelocity(Q, U);
 
+  // Velocity field
+  evaluateVelocity(Q, u);
+      
   // Low resolution velocity magnitude
   filename = outputDirectory + "/Umag/Umag-" + std::to_string(nplt) + ".dat";
-  magnitude(U, Umag);
+  magnitude(u, Umag);
   writeField(filename, Umag, plotPrecision);
 
   // High resolution velocity
   filename = outputDirectory + "/U/U-" + std::to_string(nsave) + ".dat";
-  writeField(filename, U, savePrecision);
+  writeField(filename, u, savePrecision);
 
   // High resolution nematic tensor
   filename = outputDirectory + "/Q/Q-" + std::to_string(nsave) + ".dat"; 
@@ -428,10 +480,10 @@ int main(int argc, char** argv) {
   // Print out time step information 
   printf("           t = %3.3f \n"
          "          dt = %3.3f \n"
-         "     ||U||_2 = %1.4e \n"
-         "   ||U||_inf = %1.4e \n"
+         "     ||U||_2 = %1.14e \n"
+         "   ||U||_inf = %1.14e \n"
          "        loop = %1.4es\n"
-         "---------------------------\n", t, dt, norm_2(U, dV), norm_inf(U), loopTimer);
+         "---------------------------\n", t, dt, norm_2(u, dV), norm_inf(u), loopTimer);
 
   // Write time step information to file
   output_ptr = fopen(output_str.c_str(), "a");    
@@ -441,7 +493,7 @@ int main(int argc, char** argv) {
          "     ||U||_2 = %1.4e \n"
          "   ||U||_inf = %1.4e \n"
          "        loop = %1.4es\n"
-         "---------------------------\n", t, dt, norm_2(U, dV), norm_inf(U), loopTimer);
+         "---------------------------\n", t, dt, norm_2(u, dV), norm_inf(u), loopTimer);
 
   // Update time
   t += dt;
@@ -479,7 +531,7 @@ int main(int argc, char** argv) {
     loopTimer = omp_get_wtime() - loopTimer;
 
     // End simulation if unstable
-    if(std::isnan(Q.f11[0][0])){
+    if(std::isnan(Q[0][0][0][0])){
       std::cerr << "Unstable, stopping simulation..." << std::endl;
       return 0;  
     }
@@ -490,10 +542,10 @@ int main(int argc, char** argv) {
     // Print out time step information 
     printf("           t = %3.3f \n"
            "          dt = %3.3f \n"
-           "     ||U||_2 = %1.4e \n"
-           "   ||U||_inf = %1.4e \n"
+           "     ||U||_2 = %1.14e \n"
+           "   ||U||_inf = %1.14e \n"
            "        loop = %1.4es\n"
-           "---------------------------\n", t, dt, norm_2(U, dV), norm_inf(U), loopTimer);
+           "---------------------------\n", t, dt, norm_2(u, dV), norm_inf(u), loopTimer);
 
     // Write time step information to file
     output_ptr = fopen(output_str.c_str(), "a");    
@@ -503,7 +555,7 @@ int main(int argc, char** argv) {
            "     ||U||_2 = %1.4e \n"
            "   ||U||_inf = %1.4e \n"
            "        loop = %1.4es\n"
-           "---------------------------\n", t, dt, norm_2(U, dV), norm_inf(U), loopTimer);
+           "---------------------------\n", t, dt, norm_2(u, dV), norm_inf(u), loopTimer);
     fclose(output_ptr);
 
   
@@ -518,10 +570,10 @@ int main(int argc, char** argv) {
       writeField(filename, s, plotPrecision);      
 
       // Compute velocity
-      evaluateVelocity(Q, U);
+      evaluateVelocity(Q, u);
 
       // Computed velocity magnitude
-      magnitude(U, Umag);
+      magnitude(u, Umag);
 
       // Write velocity magnitude (low resolution)
       filename = outputDirectory + "/Umag/Umag-" + std::to_string(nplt) + ".dat";
@@ -539,11 +591,11 @@ int main(int argc, char** argv) {
     if(t - lastTimeSaved >= tsave){
 
       // Compute velocity
-      evaluateVelocity(Q, U);
+      evaluateVelocity(Q, u);
 
       // Write velocity (high resolution)
       filename = outputDirectory + "/U/U-" + std::to_string(nsave) + ".dat";
-      writeField(filename, U, savePrecision);
+      writeField(filename, u, savePrecision);
 
       // Write nematic tensor (high resolution)
       filename = outputDirectory + "/Q/Q-" + std::to_string(nsave) + ".dat"; 
@@ -557,10 +609,11 @@ int main(int argc, char** argv) {
     }
 
     // Compute maximal Courant number
-    double CFL = L / (norm_inf(U) * N);
+    double CFL = L / (norm_inf(u) * N);
 
     // Update time step
     dtp1 = tplt / std::round(tplt / std::min(tplt, (3.0 / 8.0) * CFL));
+    dtp1 = std::min(dtp1, dt_max);
 
     // Ensure plotting 
     if(t + dtp1 > lastTimePlotted + tplt){
@@ -587,28 +640,12 @@ int main(int argc, char** argv) {
   //  Clean up
   //************************************************************
 
-  free(wavenumber); 
-  free(EulerOperator); 
-  free(SBDF2Operator); 
-
-  U.freeMemory();
-  U_h.freeMemory();
-  gradU.freeMemory();
-
-  bufferVector.freeMemory();
-
-  Q.freeMemory();
-  Q_h.freeMemory();
-  Qm1_h.freeMemory();
-  gradQ.freeMemory();
-
-  F.freeMemory();
-  Fm1_h.freeMemory();
-
-  Sigma_h.freeMemory();
+  delete[] wavenumber; 
+  delete[] EulerOperator; 
+  delete[] SBDF2Operator; 
+  delete[] s;
+  delete[] Umag;
   
-  ST.freeMemory();
-
   return 0;
 
 }
