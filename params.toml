@@ -1,0 +1,19 @@
+
+[resolution]
+N = 64                 # number of grid points per dimension
+Ncheb = 81                 # degree of Chebyshev polynomial
+
+[dimensionless]
+L = 1.0                 # box size
+sigma_a = -1.0          # dipole coefficient
+sigma_b = 0.1421        # constraint stress coefficient
+dT = 1e-4               # translation diffusion coefficient
+dR = 0.0                # rotational diffusion coefficient
+zeta = 0.0              # Maier-Saupe alignment coefficient
+
+[time]
+t0 = 0.0                # initial time
+tf = 150.0              # final time
+dt = 0.5                # maximum time step
+tplt = 1.0              # low-res plot interval
+tsave = 5.0             # high-res save interval
