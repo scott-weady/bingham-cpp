@@ -1,45 +1,26 @@
 
-# params ?= params.h
-
-# CXX = g++
-# CXXFLAGS = -include $(params) -O3 -march=native -ftree-vectorize -fopenmp
-# FFTFLAGS = -lfftw3_omp -lfftw3 -lm
-
-# TARGETS = $(basename $(wildcard *.cpp))
-# all : $(TARGETS)
-
-# %:%.cpp *.h
-# 	$(CXX) $(CXXFLAGS) $< $(LIBS) -o $@ $(FFTFLAGS)
-
-# clean:
-# 	-$(RM) $(TARGETS) *~
-
-# .PHONY: all, clean
-
 # Compiler and flags
 CXX := g++
-CXXFLAGS := -O3 -march=native -ftree-vectorize -fopenmp -Iinclude
+CXXFLAGS := -O3 -march=native -ftree-vectorize -fopenmp -Iinclude -std=c++23
 LDFLAGS := -lfftw3_omp -lfftw3 -lm
-
-# Optional: include a parameter header
-# PARAMS ?= params.h
-# CXXFLAGS += -include $(PARAMS)
 
 # Directories
 SRC_DIR := src
 BUILD_DIR := build
 
-# Find all source files and set corresponding output binaries
+# All source files
 SRCS := $(wildcard $(SRC_DIR)/*.cpp)
-TARGETS := $(patsubst $(SRC_DIR)/%.cpp, $(BUILD_DIR)/%, $(SRCS))
+
+# Name of the final executable
+TARGET := $(BUILD_DIR)/main
 
 # Default target
-all: $(TARGETS)
+all: $(TARGET)
 
-# Rule to compile each .cpp directly to a binary (no .o files)
-$(BUILD_DIR)/%: $(SRC_DIR)/%.cpp
+# Compile all sources into one executable
+$(TARGET): $(SRCS)
 	@mkdir -p $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
+	$(CXX) $(CXXFLAGS) $(SRCS) -o $@ $(LDFLAGS)
 
 # Clean rule
 clean:
