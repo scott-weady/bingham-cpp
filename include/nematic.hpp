@@ -1,13 +1,14 @@
 #pragma once
 
-#include <omp.h>
 #include <bingham.hpp>
 #include <spectral.hpp>
 #include <tensor.hpp>
+
+#include <omp.h>
 #include <utils.hpp>
 
 // Nonlinear term in Q-tensor equation
-auto evaluateNonlinearity(tensor::Tensor2 F, tensor::Tensor1 u, tensor::Tensor2 Du, tensor::Tensor2 Q, tensor::Tensor3 DQ, BinghamClosure& closure, FastFourierTransform& fft){ 
+auto evaluateNonlinearity(tensor::Tensor2 F, tensor::Tensor1 u, tensor::Tensor2 Du, tensor::Tensor2 Q, tensor::Tensor3 DQ, BinghamClosure& closure, SpectralSolver& fft){ 
 
   fft.grad(u, Du);  //velocity gradient
   fft.grad(Q, DQ); //gradient of Q
@@ -61,7 +62,7 @@ auto stress(tensor::Tensor2 Sigma, tensor::Tensor2 Q, tensor::Tensor2 ST){
 }
 
 // Spectral Stokes solver
-auto StokesSolver(tensor::Tensor1 u, tensor::Tensor2 Sigma, FastFourierTransform& fft){
+auto StokesSolver(tensor::Tensor1 u, tensor::Tensor2 Sigma, SpectralSolver& fft){
 
   // Compute Fourier transform
   auto u_h = fft.fft(u);
@@ -138,7 +139,7 @@ auto StokesSolver(tensor::Tensor1 u, tensor::Tensor2 Sigma, FastFourierTransform
 }
 
 // Iterative fluid solver with nematic stress
-auto fluidSolver(tensor::Tensor1 u, tensor::Tensor2 Du, tensor::Tensor2 Q, tensor::Tensor2 Sigma, BinghamClosure& ST, tensor::Tensor1 up1, FastFourierTransform& fft, double tolerance=1e-8, int maxIterations=10){
+auto fluidSolver(tensor::Tensor1 u, tensor::Tensor2 Du, tensor::Tensor2 Q, tensor::Tensor2 Sigma, BinghamClosure& ST, tensor::Tensor1 up1, SpectralSolver& fft, double tolerance=1e-8, int maxIterations=10){
 
   // Compute unconstrained stress Sigma = sigma_a * Q
   #pragma omp parallel for
@@ -191,7 +192,7 @@ auto fluidSolver(tensor::Tensor1 u, tensor::Tensor2 Du, tensor::Tensor2 Q, tenso
 }
 
 // Compute nematic order parameter from Q-tensor
-auto nematicOrderParameter(tensor::Tensor2 Q, double* s){
+auto nematicOrderParameter(tensor::Tensor2 Q, fftw_complex* s){
   
   auto tolerance = 1e-14; //convergence tolerance for eig solve
   auto maxIterations = 100; //std::max iterations for eig solve
@@ -238,13 +239,14 @@ auto nematicOrderParameter(tensor::Tensor2 Q, double* s){
     auto nu3 = 0.5 * (-(mu - 1) - std::sqrt(std::abs((mu - 1) * (mu - 1) - 4.0 * (a1 + mu * (mu - 1)))));
     
     mu = std::max(std::max(nu1, nu2), nu3); //sort 
-    s[idx] = 1.5 * (mu - 1.0 / 3); //store
+    s[idx][0] = 1.5 * (mu - 1.0 / 3); //store
+    s[idx][1] = 0.0;
     
   }
 }
 
 // Generate or load initial condition
-auto initialCondition(tensor::Tensor2 Q, bool resume, FastFourierTransform& fft){
+auto initialCondition(tensor::Tensor2 Q, bool resume, SpectralSolver& fft){
 
   try{
       

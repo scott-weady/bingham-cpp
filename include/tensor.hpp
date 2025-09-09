@@ -2,6 +2,7 @@
 #pragma once
 
 #include <array>
+#include <cstring>
 #include <fftw3.h>
 
 namespace tensor{

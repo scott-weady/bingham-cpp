@@ -4,6 +4,7 @@
 #include <iostream>
 #include <string>
 #include <tensor.hpp>
+#include <type_traits>
 #include <utils.hpp>
 
 
@@ -28,16 +29,13 @@ auto saveField(const std::string& outputDir, const std::string& name, int nsave,
   // Write to file based on type
   for(auto idx = 0; idx < N * N * N; idx++){
 
-    if constexpr (std::is_same<T, double*>::value) {
-      wf << field[idx] << "\n";
-    } 
-    else if constexpr(std::is_same<T, fftw_complex*>::value) {
+    if constexpr(std::is_same_v<T, fftw_complex*>) {
       wf << field[idx][0] << "\n";
     } 
-    else if constexpr (std::is_same<T, tensor::Tensor1>::value) {
+    else if constexpr (std::is_same_v<T, tensor::Tensor1>) {
       wf << field[0][idx][0] << " " << field[1][idx][0] << " " << field[2][idx][0] << "\n";
     } 
-    else if constexpr (std::is_same<T, tensor::Tensor2>::value) {
+    else if constexpr (std::is_same_v<T, tensor::Tensor2>) {
       wf << field[0][0][idx][0] << " " << field[0][1][idx][0] << " " << field[0][2][idx][0] << " "
          << field[1][1][idx][0] << " " << field[1][2][idx][0] << " " << field[2][2][idx][0] << "\n";
     }

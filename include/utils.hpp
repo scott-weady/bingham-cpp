@@ -1,9 +1,9 @@
 
 #pragma once
 
+#include <array>
 #include <omp.h>
 #include <random>
-
 #include <spectral.hpp>
 #include <tensor.hpp>
 
@@ -24,38 +24,34 @@ auto randf(){
 }
 
 // Copy tensor fields
-auto copy(tensor::Tensor1& dest, tensor::Tensor1& src){
-  #pragma omp parallel for
-  for(auto i = 0; i < 3; i++){
+template<typename T>
+auto copy(T& dest, T& src){
+
+  if constexpr (std::is_same_v<T, fftw_complex*>){
+    #pragma omp parallel for
     for(auto idx = 0; idx < N * N * N; idx++){
-      dest[i][idx][0] = src[i][idx][0];
-      dest[i][idx][1] = src[i][idx][1];
+      dest[idx][0] = src[idx][0];
+      dest[idx][1] = src[idx][1];
     }
   }
-};
-
-// Copy tensor fields
-auto copy(tensor::Tensor2& dest, tensor::Tensor2& src){
-  #pragma omp parallel for
-  for(auto i = 0; i < 3; i++){
-    for(auto j = 0; j < 3; j++){
-      for(auto idx = 0; idx < N * N * N; idx++){
-        dest[i][j][idx][0] = src[i][j][idx][0];
-        dest[i][j][idx][1] = src[i][j][idx][1];
-      }
-    }
+  else{
+    for(auto i = 0; i < 3; i++) copy(dest[i], src[i]);
   }
-};
 
+  return;
+
+};
 
 // Pointwise magnitude of vector valued functions
-auto magnitude(tensor::Tensor1 u, double* u_abs){
+auto magnitude(tensor::Tensor1 u, fftw_complex* u_abs){
 
   // Loop over array
   #pragma omp parallel for
-  for(auto idx = 0; idx < N * N * N; idx++)
-    u_abs[idx] = std::sqrt(u[0][idx][0] * u[0][idx][0] + u[1][idx][0] * u[1][idx][0] + u[2][idx][0] * u[2][idx][0]);
-
+  for(auto idx = 0; idx < N * N * N; idx++){
+    u_abs[idx][0] = std::sqrt(u[0][idx][0] * u[0][idx][0] + u[1][idx][0] * u[1][idx][0] + u[2][idx][0] * u[2][idx][0]);
+    u_abs[idx][1] = 0.0;
+  }
+  
 } 
 
 // L2 norm of vector valued functions over domain
@@ -94,7 +90,7 @@ auto Linf(tensor::Tensor1 u){
 } 
 
 // Generate a plane wave perturbation
-auto planeWave(double* u, FastFourierTransform& fft){
+auto planeWave(fftw_complex* u, SpectralSolver& fft){
 
   auto wavenumber = fft.wavenumber;
   auto N = fft.N;
@@ -128,7 +124,8 @@ auto planeWave(double* u, FastFourierTransform& fft){
 
         auto idx = nz + N * ny + N * N * nx;
         
-        u[idx] = C * std::cos(k1 * x + w1) * std::cos(k2 * y + w2) * std::cos(k3 * z + w3);
+        u[idx][0] += C * std::cos(k1 * x + w1) * std::cos(k2 * y + w2) * std::cos(k3 * z + w3);
+        u[idx][1] += 0.0;
 
       }
     }
@@ -139,7 +136,7 @@ auto planeWave(double* u, FastFourierTransform& fft){
 }
 
 // Evaluate sum of plane wave perturbations
-auto perturbation(fftw_complex* u, FastFourierTransform& fft){
+auto perturbation(fftw_complex* u, SpectralSolver& fft){
 
   // Get resolution
   auto N = fft.N;
@@ -147,15 +144,8 @@ auto perturbation(fftw_complex* u, FastFourierTransform& fft){
   // Number of perturbations
   auto Npert = 4;
 
-  // Initialize as unique_ptr
-  auto du = std::make_unique<double[]>(N * N * N);
-
   // Add perturbations
-  for(auto n = 0; n < Npert; n++){
-    planeWave(du.get(), fft);
-    #pragma omp parallel for
-    for(auto idx = 0; idx < N * N * N; idx++) u[idx][0] += du[idx];
-  }
+  for(auto n = 0; n < Npert; n++) planeWave(u, fft);
 
   return u;
 

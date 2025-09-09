@@ -1,5 +1,4 @@
 
-#include <cstring>
 #include <tensor.hpp>
 
 fftw_complex* tensor::zeros(int N) {

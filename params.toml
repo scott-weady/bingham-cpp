@@ -1,5 +1,4 @@
 
-[resolution]
 N = 64                 # number of grid points per dimension
 Ncheb = 81                 # degree of Chebyshev polynomial
 

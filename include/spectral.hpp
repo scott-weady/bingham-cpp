@@ -2,14 +2,15 @@
 #pragma once
 
 #include <cmath>
+#include <config.hpp>
 #include <fftw3.h>
 #include <omp.h>
 #include <tensor.hpp>
 
 const double pi = M_PI;
 
-/** Fast Fourier Transform class */
-class FastFourierTransform {
+/** Spectral Solver class */
+class SpectralSolver {
 
   public:
     
@@ -18,9 +19,11 @@ class FastFourierTransform {
     double kmax;
     double* wavenumber = new double[N];
     double* laplacian = new double[N * N * N];
+    double* Linv = new double[N * N * N];
+    Params p;
 
-    FastFourierTransform(int N, double L, int nthreads); //constructor
-    ~FastFourierTransform(); //destructor
+    SpectralSolver(int N, double L, Params p, int nthreads); //constructor
+    ~SpectralSolver();                                       // destructor
 
     // Forward FFT
     template <typename T>
@@ -37,6 +40,9 @@ class FastFourierTransform {
     // Gradient operator
     template <typename TensorIn, typename TensorOut>
     TensorOut& grad(TensorIn& u, TensorOut& Du);
+
+    // Helmholtz operator
+    double* helmholtzOperator(double D, double dt);
 
   private:
 

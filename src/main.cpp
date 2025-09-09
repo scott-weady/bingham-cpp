@@ -2,12 +2,6 @@
 *  Apolar active nematic model in 3D
 ******************************************************************************/
 
-#include <filesystem>
-#include <iostream>
-#include <omp.h>
-#include <string> 
-
-#include <config.hpp>
 
 // Dimensionless variables (global scope)
 double L, sigma_a, sigma_b, zeta, dT, dR;
@@ -15,13 +9,19 @@ double L, sigma_a, sigma_b, zeta, dT, dR;
 // Grid resolution (global scope)
 int N;
 
-#include <bingham.hpp>
+#include <filesystem>
+#include <iostream>
+#include <omp.h>
+#include <string> 
+
+#include <config.hpp>
+
 #include <io.hpp>
+
 #include <nematic.hpp>
-#include <spectral.hpp>
-#include <tensor.hpp>
-#include <timesteppers.hpp>
+#include <integrators.hpp>
 #include <utils.hpp>
+
 
 int main(int argc, char** argv) {
 
@@ -109,7 +109,7 @@ int main(int argc, char** argv) {
   //************************************************************ 
 
   std::cout << "Preparing FFT..." << '\n';
-  FastFourierTransform fft(N, L, nthreads);
+  SpectralSolver solver(N, L, p, nthreads);
 
   //************************************************************ 
   //  Set up temporal integrator
@@ -127,10 +127,6 @@ int main(int argc, char** argv) {
   auto lastTimePlotted = t0; //counter for plotting interval
   auto lastTimeSaved = t0; //counter for saving interval
 
-  // Initialize time stepping operator
-  auto timeSteppingOperator = new double[N * N * N];
-  helmholtzOperator(timeSteppingOperator, dt * dT, fft); 
-
   // Clock for timing
   double loopTimer;
 
@@ -139,8 +135,8 @@ int main(int argc, char** argv) {
   //************************************************************ 
 
   // Preallocate arrays
-  auto Qmag = new double[N * N * N];
-  auto umag = new double[N * N * N];
+  auto Qmag = tensor::zeros(N);
+  auto umag = tensor::zeros(N);
 
   auto u = tensor::zeros1(N);
   auto up1 = tensor::zeros1(N);
@@ -163,37 +159,45 @@ int main(int argc, char** argv) {
 
   // Closure for computing the fluid velocity
   auto updateVelocity = [&]() {
-    fluidSolver(u, Du, Q, Sigma, ST, up1, fft);
+    fluidSolver(u, Du, Q, Sigma, ST, up1, solver);
     return u;
   };
 
   // Function for evaluating all nonlinear terms
   auto updateNonlinearity = [&]() {
     updateVelocity(); //velocity
-    evaluateNonlinearity(F, u, Du, Q, DQ, ST, fft); //nonlinear terms
+    evaluateNonlinearity(F, u, Du, Q, DQ, ST, solver); //nonlinear terms
     return F;
   };
 
   auto updateQ = [&](double dt, double dtm1) {
     updateNonlinearity(); //nonlinear terms
-    sbdf2(Q, Qm1, F, Fm1, timeSteppingOperator, dt, dtm1, fft, true); //take a time step
+    sbdf2(Q, Qm1, F, Fm1, dt, dtm1, solver, true); //take a time step
     symmetrize(Q); //enforce trace condition and symmetry
+  };
+
+  auto plot = [&]() {
+    updateVelocity();
+    magnitude(u, umag);
+    nematicOrderParameter(Q, Qmag);
+    saveField(results, "umag", nplt, umag, plotPrecision);
+    saveField(results, "Qmag", nplt, Qmag, plotPrecision);
+  };
+
+  auto save = [&]() {
+    updateVelocity();
+    saveField(results, "u", nsave, u, savePrecision);
+    saveField(results, "Q", nsave, Q, savePrecision);
   };
 
   //************************************************************ 
   //  Construct initial data and write
   //************************************************************ 
 
-  initialCondition(Q, resume, fft);
+  initialCondition(Q, resume, solver);
 
-  // Compute quantities for plotting and saving
-  updateVelocity();
-  
-  saveField(results, "umag", nplt, umag, plotPrecision);
-  saveField(results, "Qmag", nplt, Qmag, plotPrecision);
-
-  saveField(results, "u", nsave, u, savePrecision);
-  saveField(results, "Q", nsave, Q, savePrecision);
+  plot();
+  save();
 
   // Update file counter
   nplt++;
@@ -215,7 +219,7 @@ int main(int argc, char** argv) {
   copy(Qm1, Q); copy(Fm1, F);
   
   // Take first time step with Euler method
-  euler(Q, F, timeSteppingOperator, dt, fft, true);
+  euler(Q, F, dt, solver, true);
   symmetrize(Q); //enforce trace condition and symmetry
 
   // Time loop
@@ -226,9 +230,6 @@ int main(int argc, char** argv) {
 
   // Update time
   t += dt;
-
-  // Update time stepping operator
-  helmholtzOperator(timeSteppingOperator, (2.0 / 3.0) * dt * dT, fft); 
 
   //************************************************************ 
   //  Main loop 
@@ -258,52 +259,27 @@ int main(int argc, char** argv) {
     printTimestepInfo(timeStepLog, t, dt, u, dV, -loopTimer);
 
     // Low resolution file save
-    if(t - lastTimePlotted >= tplt){
-
-      // Compute quantities for plotting
-      updateVelocity();
-      magnitude(u, umag);
-      nematicOrderParameter(Q, Qmag);
-
-      saveField(results, "umag", nplt, umag, plotPrecision);
-      saveField(results, "Qmag", nplt, Qmag, plotPrecision);
-
-      // Update plotting time and counter
+    if(t - lastTimePlotted == tplt){
+      plot();
       lastTimePlotted = t;
       nplt++;
-
     }
 
     // High resolution file save
-    if(t - lastTimeSaved >= tsave){
-
-      updateVelocity();
-
-      saveField(results, "u", nsave, u, savePrecision);
-      saveField(results, "Q", nsave, Q, savePrecision);
-
-      // Update saving time and counter
+    if(t - lastTimeSaved == tsave){
+      save();
       lastTimeSaved = t;
       nsave++;
-
     }
 
     // Update time step through CFL condition
-    auto dtp1 = std::min(0.375 * L / (Linf(u) * N), dt_max);
-
-    if(t + dtp1 > lastTimePlotted + tplt) dtp1 = lastTimePlotted + tplt - t; // Ensure we plot on time
-    if(t + dtp1 > lastTimePlotted + tf) dtp1 = lastTimePlotted + tf - t; // Ensure we plot at final time
-  
-    // Time step ratio
-    auto r = dtp1 / dt;
-
-    // Update time stepping operator
-    helmholtzOperator(timeSteppingOperator, (1 + r) / (1 + 2 * r) * dtp1 * dT, fft); 
-
-    // Prepare for next time step
-    dt = dtp1;
     dtm1 = dt;
+    dt = std::min(0.375 * L / (Linf(u) * N), dt_max);
 
+    if(t + dt > lastTimePlotted + tplt) dt = lastTimePlotted + tplt - t; // Ensure we plot on time
+    if(t + dt > lastTimeSaved + tsave) dt = lastTimeSaved + tsave - t; // Ensure we save on time
+    if(t + dt > lastTimePlotted + tf) dt = lastTimePlotted + tf - t; // Ensure we plot at final time
+  
   }
 
   // Clean up

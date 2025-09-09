@@ -1,8 +1,7 @@
 
 #include <spectral.hpp>
-#include <tensor.hpp>
 
-FastFourierTransform::FastFourierTransform(int N, double L, int nthreads) : N(N), L(L) {
+SpectralSolver::SpectralSolver(int N, double L, Params p, int nthreads) : N(N), L(L), p(p) {
 
     fftw_plan_with_nthreads(nthreads);
 
@@ -39,11 +38,12 @@ FastFourierTransform::FastFourierTransform(int N, double L, int nthreads) : N(N)
 }
 
 // Destructor
-FastFourierTransform::~FastFourierTransform() {
+SpectralSolver::~SpectralSolver() {
     fftw_destroy_plan(fft3_plan);
     fftw_destroy_plan(ifft3_plan);
     delete[] wavenumber;
     delete[] laplacian;
+    delete[] Linv;
 }
 
 /**
@@ -59,7 +59,7 @@ FastFourierTransform::~FastFourierTransform() {
  * 
  */
 template <typename T>
-T& FastFourierTransform::fft(T& u, bool issymmetric) {
+T& SpectralSolver::fft(T& u, bool issymmetric) {
 
     if constexpr (std::is_same_v<T, fftw_complex*>){
         fftw_execute_dft(fft3_plan, u, u);
@@ -73,10 +73,10 @@ T& FastFourierTransform::fft(T& u, bool issymmetric) {
 }
 
 // Instantiate template for types used
-template fftw_complex*& FastFourierTransform::fft<fftw_complex*>(fftw_complex*&, bool);
-template tensor::Tensor1& FastFourierTransform::fft<tensor::Tensor1>(tensor::Tensor1&, bool);
-template tensor::Tensor2& FastFourierTransform::fft<tensor::Tensor2>(tensor::Tensor2&, bool);
-template tensor::Tensor3& FastFourierTransform::fft<tensor::Tensor3>(tensor::Tensor3&, bool);
+template fftw_complex*& SpectralSolver::fft<fftw_complex*>(fftw_complex*&, bool);
+template tensor::Tensor1& SpectralSolver::fft<tensor::Tensor1>(tensor::Tensor1&, bool);
+template tensor::Tensor2& SpectralSolver::fft<tensor::Tensor2>(tensor::Tensor2&, bool);
+template tensor::Tensor3& SpectralSolver::fft<tensor::Tensor3>(tensor::Tensor3&, bool);
 
 /**
  * Inverse Fast Fourier Transform
@@ -91,7 +91,7 @@ template tensor::Tensor3& FastFourierTransform::fft<tensor::Tensor3>(tensor::Ten
  * 
  */
 template <typename T>
-T& FastFourierTransform::ifft(T& u, bool issymmetric) {
+T& SpectralSolver::ifft(T& u, bool issymmetric) {
 
     if constexpr (std::is_same_v<T, fftw_complex*>){
         fftw_execute_dft(ifft3_plan, u, u);
@@ -111,10 +111,10 @@ T& FastFourierTransform::ifft(T& u, bool issymmetric) {
 }
 
 // Instantiate template for types used
-template fftw_complex*& FastFourierTransform::ifft<fftw_complex*>(fftw_complex*&, bool);
-template tensor::Tensor1& FastFourierTransform::ifft<tensor::Tensor1>(tensor::Tensor1&, bool);
-template tensor::Tensor2& FastFourierTransform::ifft<tensor::Tensor2>(tensor::Tensor2&, bool);
-template tensor::Tensor3& FastFourierTransform::ifft<tensor::Tensor3>(tensor::Tensor3&, bool);
+template fftw_complex*& SpectralSolver::ifft<fftw_complex*>(fftw_complex*&, bool);
+template tensor::Tensor1& SpectralSolver::ifft<tensor::Tensor1>(tensor::Tensor1&, bool);
+template tensor::Tensor2& SpectralSolver::ifft<tensor::Tensor2>(tensor::Tensor2&, bool);
+template tensor::Tensor3& SpectralSolver::ifft<tensor::Tensor3>(tensor::Tensor3&, bool);
 
 /**
  * Gradient operator
@@ -130,7 +130,7 @@ template tensor::Tensor3& FastFourierTransform::ifft<tensor::Tensor3>(tensor::Te
  * 
  */
 template <typename TensorIn, typename TensorOut>
-TensorOut& FastFourierTransform::grad(TensorIn& u, TensorOut& Du){
+TensorOut& SpectralSolver::grad(TensorIn& u, TensorOut& Du){
 
     // Base case
     if constexpr (std::is_same_v<TensorIn, fftw_complex*>) {
@@ -186,9 +186,9 @@ TensorOut& FastFourierTransform::grad(TensorIn& u, TensorOut& Du){
 }
 
 // Instantiate template for types used
-template tensor::Tensor1& FastFourierTransform::grad<fftw_complex*, tensor::Tensor1>(fftw_complex*&, tensor::Tensor1&);
-template tensor::Tensor2& FastFourierTransform::grad<tensor::Tensor1, tensor::Tensor2>(tensor::Tensor1&, tensor::Tensor2&);
-template tensor::Tensor3& FastFourierTransform::grad<tensor::Tensor2, tensor::Tensor3>(tensor::Tensor2&, tensor::Tensor3&);
+template tensor::Tensor1& SpectralSolver::grad<fftw_complex*, tensor::Tensor1>(fftw_complex*&, tensor::Tensor1&);
+template tensor::Tensor2& SpectralSolver::grad<tensor::Tensor1, tensor::Tensor2>(tensor::Tensor1&, tensor::Tensor2&);
+template tensor::Tensor3& SpectralSolver::grad<tensor::Tensor2, tensor::Tensor3>(tensor::Tensor2&, tensor::Tensor3&);
 
 /**
  * Anti-aliasing operator
@@ -203,7 +203,7 @@ template tensor::Tensor3& FastFourierTransform::grad<tensor::Tensor2, tensor::Te
  * 
  */
 template <typename T>
-T& FastFourierTransform::antialias(T& u){
+T& SpectralSolver::antialias(T& u){
 
     if constexpr (std::is_same_v<T, fftw_complex*>) {
 
@@ -240,7 +240,18 @@ T& FastFourierTransform::antialias(T& u){
 }
 
 // Instantiate template for types used
-template fftw_complex*& FastFourierTransform::antialias<fftw_complex*>(fftw_complex*&);
-template tensor::Tensor1& FastFourierTransform::antialias<tensor::Tensor1>(tensor::Tensor1&);
-template tensor::Tensor2& FastFourierTransform::antialias<tensor::Tensor2>(tensor::Tensor2&);
-template tensor::Tensor3& FastFourierTransform::antialias<tensor::Tensor3>(tensor::Tensor3&);
+template fftw_complex*& SpectralSolver::antialias<fftw_complex*>(fftw_complex*&);
+template tensor::Tensor1& SpectralSolver::antialias<tensor::Tensor1>(tensor::Tensor1&);
+template tensor::Tensor2& SpectralSolver::antialias<tensor::Tensor2>(tensor::Tensor2&);
+template tensor::Tensor3& SpectralSolver::antialias<tensor::Tensor3>(tensor::Tensor3&);
+
+double* SpectralSolver::helmholtzOperator(double D, double dt){
+
+    #pragma omp parallel for
+    for(auto idx = 0; idx < N * N * N; idx++){
+        Linv[idx] = 1.0 / (1.0 - D * dt * laplacian[idx]);
+    }
+
+    return Linv;
+
+}
