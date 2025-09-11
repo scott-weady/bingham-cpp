@@ -1,19 +1,34 @@
 #pragma once
 
+#include <omp.h>
+
 #include <bingham.hpp>
 #include <spectral.hpp>
 #include <tensor.hpp>
-
-#include <omp.h>
 #include <utils.hpp>
 
-// Nonlinear term in Q-tensor equation
-auto evaluateNonlinearity(tensor::Tensor2 F, tensor::Tensor1 u, tensor::Tensor2 Du, tensor::Tensor2 Q, tensor::Tensor3 DQ, BinghamClosure& closure, SpectralSolver& fft){ 
+/** Evaluate nonlinearity term in Q-tensor equation 
+ * F = -u . grad Q + (grad u)^T . Q + Q . (grad u) - 2 S:T + 4 zeta Q.Q - 6 dR (Q - I/3)
+ * where S:T is computed via Bingham closure
+ * @param F Nonlinearity tensor to be evaluated
+ * @param u Velocity field
+ * @param Du Velocity gradient
+ * @param Q Nematic order parameter
+ * @param DQ Gradient of nematic order parameter
+ * @param closure Bingham closure object
+ * @param solver Spectral solver object
+ * @param p Simulation parameters
+ * @return F Updated nonlinearity tensor
+ */
+auto evaluateNonlinearity(tensor::Tensor2 F, tensor::Tensor1 u, tensor::Tensor2 Du, tensor::Tensor2 Q, tensor::Tensor3 DQ, BinghamClosure& closure, SpectralSolver& solver, Params p){ 
 
-  fft.grad(u, Du);  //velocity gradient
-  fft.grad(Q, DQ); //gradient of Q
+  solver.grad(u, Du);  //velocity gradient
+  solver.grad(Q, DQ); //gradient of Q
+
   auto ST = closure.compute(Q, Du); //Bingham closure (returns reference to internal ST variable)
-  
+  auto zeta = p.dim.zeta; //alignment parameter
+  auto dR = p.dim.dR; //rotational diffusion coefficient
+
   // Main loop 
   #pragma omp parallel for 
   for(auto i = 0; i < 3; i++){ 
@@ -35,39 +50,24 @@ auto evaluateNonlinearity(tensor::Tensor2 F, tensor::Tensor1 u, tensor::Tensor2 
     } 
   }
 
-  fft.antialias(F); //dealiasing
+  solver.antialias(F); //dealiasing
   return F;
 
 }
 
-// Nematic stress tensor
-auto stress(tensor::Tensor2 Sigma, tensor::Tensor2 Q, tensor::Tensor2 ST){
-
-  #pragma omp parallel for
-  for(auto i = 0; i < 3; i++){
-    for(auto j = 0; j < 3; j++){
-      for(auto idx = 0; idx < N * N * N; idx++){
-
-        auto QQ = 0.0;
-        for(auto k = 0; k < 3; k++) QQ += Q[i][k][idx][0] * Q[k][j][idx][0];
-
-        Sigma[i][j][idx][0] = sigma_a * Q[i][j][idx][0] + sigma_b * ST[i][j][idx][0] - 2 * sigma_b * zeta * QQ;
-
-      }
-    }
-  }
-
-  return Sigma;
-  
-}
-
-// Spectral Stokes solver
-auto StokesSolver(tensor::Tensor1 u, tensor::Tensor2 Sigma, SpectralSolver& fft){
+/** Spectral Stokes solver 
+ * Solves -grad p + lap u = div Sigma, div u = 0
+ * @param u Velocity field (input is initial guess, output is solution)
+ * @param Sigma Stress tensor
+ * @param solver Spectral solver object
+ * @return u Updated velocity field
+*/
+auto StokesSolver(tensor::Tensor1 u, tensor::Tensor2 Sigma, SpectralSolver& solver){
 
   // Compute Fourier transform
-  auto u_h = fft.fft(u);
-  auto Sigma_h = fft.fft(Sigma, true); //true indicates tensor is symmetric
-  auto wavenumber = fft.wavenumber;
+  auto u_h = solver.fft(u);
+  auto Sigma_h = solver.fft(Sigma, true); //true indicates tensor is symmetric
+  auto wavenumber = solver.wavenumber;
 
   #pragma omp parallel for
   for(auto nx = 0; nx < N; nx++){
@@ -131,16 +131,66 @@ auto StokesSolver(tensor::Tensor1 u, tensor::Tensor2 Sigma, SpectralSolver& fft)
   u_h[2][0][1] = 0.0;
 
   // Convert to real space
-  u = fft.ifft(u_h);
-  Sigma = fft.ifft(Sigma_h, true);
+  u = solver.ifft(u_h);
+  Sigma = solver.ifft(Sigma_h, true);
 
   return u;
 
 }
 
-// Iterative fluid solver with nematic stress
-auto fluidSolver(tensor::Tensor1 u, tensor::Tensor2 Du, tensor::Tensor2 Q, tensor::Tensor2 Sigma, BinghamClosure& ST, tensor::Tensor1 up1, SpectralSolver& fft, double tolerance=1e-8, int maxIterations=10){
 
+/** Evaluate stress tensor
+ * Sigma = sigma_a * Q + sigma_b * S:T - 2 sigma_b zeta Q.Q 
+ * @param Sigma Stress tensor to be evaluated
+ * @param Q Nematic order parameter
+ * @param ST Extra stress tensor
+ * @param p Simulation parameters
+ * @return Sigma Updated stress tensor
+ */
+auto stressTensor(tensor::Tensor2 Sigma, tensor::Tensor2 Q, tensor::Tensor2 ST, Params p){
+
+  auto sigma_a = p.dim.sigma_a; //active stress coefficient
+  auto sigma_b = p.dim.sigma_b; //passive stress coefficient
+  auto zeta = p.dim.zeta; //alignment parameter
+
+  #pragma omp parallel for
+  for(auto i = 0; i < 3; i++){
+    for(auto j = 0; j < 3; j++){
+      for(auto idx = 0; idx < N * N * N; idx++){
+
+        auto QQ = 0.0;
+        for(auto k = 0; k < 3; k++) QQ += Q[i][k][idx][0] * Q[k][j][idx][0];
+
+        Sigma[i][j][idx][0] = sigma_a * Q[i][j][idx][0] + sigma_b * ST[i][j][idx][0] - 2 * sigma_b * zeta * QQ;
+
+      }
+    }
+  }
+
+  return Sigma;
+  
+}
+
+
+/** Iterative fluid solver
+ * Solves for velocity field given nematic order parameter using iterative scheme to account for stress dependent on velocity gradient
+ * @param u Velocity field (input is initial guess, output is solution)
+ * @param Du Velocity gradient
+ * @param Q Nematic order parameter
+ * @param Sigma Stress tensor
+ * @param closure Bingham closure object
+ * @param up1 Temporary storage for velocity field
+ * @param solver Spectral solver object
+ * @param p Simulation parameters
+ * @param tolerance Convergence tolerance
+ * @param maxIterations Maximum number of iterations
+ * @return u Updated velocity field
+ */
+auto fluidSolver(tensor::Tensor1 u, tensor::Tensor2 Du, tensor::Tensor2 Q, tensor::Tensor2 Sigma, BinghamClosure& closure, tensor::Tensor1 up1, SpectralSolver& solver, Params p, double tolerance=1e-8, int maxIterations=10){
+
+  auto sigma_a = p.dim.sigma_a;
+  auto sigma_b = p.dim.sigma_b;
+  
   // Compute unconstrained stress Sigma = sigma_a * Q
   #pragma omp parallel for
   for (auto i = 0; i < 3; i++){
@@ -150,7 +200,7 @@ auto fluidSolver(tensor::Tensor1 u, tensor::Tensor2 Du, tensor::Tensor2 Q, tenso
   }
 
   // Solve for velocity field with unconstrained stress
-  StokesSolver(u, Sigma, fft);
+  StokesSolver(u, Sigma, solver);
 
   if(sigma_b == 0) return u; //no need to iterate if sigma_b = 0
   
@@ -163,13 +213,13 @@ auto fluidSolver(tensor::Tensor1 u, tensor::Tensor2 Du, tensor::Tensor2 Q, tenso
   while(error > tolerance && iteration < maxIterations){
 
     // Compute velocity gradient
-    fft.grad(u, Du);
+    solver.grad(u, Du);
 
     // Update stress
-    stress(Sigma, Q, ST.compute(Q, Du));
+    stressTensor(Sigma, Q, closure.compute(Q, Du), p);
 
     // Solve for fluid velocity
-    StokesSolver(up1, Sigma, fft);
+    StokesSolver(up1, Sigma, solver);
 
     // Initialize current iteration error
     error = 0;
@@ -191,7 +241,10 @@ auto fluidSolver(tensor::Tensor1 u, tensor::Tensor2 Du, tensor::Tensor2 Q, tenso
   
 }
 
-// Compute nematic order parameter from Q-tensor
+/** Evaluate scalar nematic order parameter
+ * @param Q Nematic order parameter
+ * @param s Output array for scalar nematic order parameter
+ */
 auto nematicOrderParameter(tensor::Tensor2 Q, fftw_complex* s){
   
   auto tolerance = 1e-14; //convergence tolerance for eig solve
@@ -245,8 +298,15 @@ auto nematicOrderParameter(tensor::Tensor2 Q, fftw_complex* s){
   }
 }
 
-// Generate or load initial condition
-auto initialCondition(tensor::Tensor2 Q, bool resume, SpectralSolver& fft){
+/** Generate or load initial condition
+ * If resume is true, attempts to load initial condition from file "initial_data/Q/Q.dat"
+ * If file is not found or resume is false, generates new initial condition with random perturbations
+ * @param Q Nematic order parameter (output)
+ * @param resume Boolean flag to indicate whether to load from file or generate new
+ * @param solver Spectral solver object
+ * @return Q Updated nematic order parameter
+ */
+auto initialCondition(tensor::Tensor2 Q, bool resume, SpectralSolver& solver){
 
   try{
       
@@ -293,7 +353,7 @@ auto initialCondition(tensor::Tensor2 Q, bool resume, SpectralSolver& fft){
     for(auto i = 0; i < 3; i++){
       for(auto j = 0; j < 3; j++){
 
-        perturbation(Q[i][j], fft);
+        perturbation(Q[i][j], solver);
         
         if(i == j){
           #pragma omp parallel for
@@ -304,7 +364,7 @@ auto initialCondition(tensor::Tensor2 Q, bool resume, SpectralSolver& fft){
     }
   }
 
-  symmetrize(Q);
+  stabilize(Q);
   return Q;
 
 }

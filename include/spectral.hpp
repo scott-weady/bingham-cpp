@@ -1,15 +1,25 @@
 
+
 #pragma once
 
 #include <cmath>
-#include <config.hpp>
 #include <fftw3.h>
 #include <omp.h>
+
+#include <config.hpp>
 #include <tensor.hpp>
 
 const double pi = M_PI;
 
-/** Spectral Solver class */
+/** Spectral Solver class
+ * @param N Grid resolution
+ * @param L Domain size
+ * @param p Simulation parameters
+ * @param nthreads Number of OpenMP threads
+ * @return SpectralSolver object
+ * 
+ * Provides methods for FFT, iFFT, gradient, and Helmholtz operator
+ */
 class SpectralSolver {
 
   public:

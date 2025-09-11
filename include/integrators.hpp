@@ -3,9 +3,19 @@
 
 #include <omp.h>
 #include <fftw3.h>
+#include <type_traits>
+
 #include <spectral.hpp>
 #include <tensor.hpp>
 
+/** First-order explicit Euler time integration
+ * @param U Current state
+ * @param F Right-hand side
+ * @param dt Time step
+ * @param solver Spectral solver object
+ * @param issymmetric Whether the problem is symmetric
+ * @return Updated state
+ */
 template <typename T>
 T& euler(T& U, T& F, double dt, SpectralSolver& solver, bool issymmetric){
 
@@ -40,6 +50,17 @@ T& euler(T& U, T& F, double dt, SpectralSolver& solver, bool issymmetric){
 
 }
 
+/** Second-order implicit-explicit BDF2 time integration
+ * @param U Current state
+ * @param Um1 Previous state
+ * @param F Right-hand side
+ * @param Fm1 Previous right-hand side
+ * @param dt Time step
+ * @param dtm1 Previous time step
+ * @param solver Spectral solver object
+ * @param issymmetric Whether the problem is symmetric
+ * @return Updated state
+ */
 template <typename T>
 T& sbdf2(T& U, T& Um1, T& F, T& Fm1, double dt, double dtm1, SpectralSolver& solver, bool issymmetric){
 

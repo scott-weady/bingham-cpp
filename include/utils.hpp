@@ -2,12 +2,16 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <omp.h>
 #include <random>
+#include <fftw3.h>
+#include <type_traits>
+
 #include <spectral.hpp>
 #include <tensor.hpp>
 
-// Random integer
+/** Generate random integer in [1, imax] */
 auto randi(int imax){
   std::uniform_int_distribution<int> dist(1, imax);
   std::random_device rd;
@@ -15,7 +19,7 @@ auto randi(int imax){
   return dist(rng);
 }
 
-// Random float on [0, 1]
+/** Generate random double in [0, 1] */
 auto randf(){
   std::uniform_real_distribution<double> dist(0.0, 1.0);
   std::random_device rd;
@@ -23,7 +27,10 @@ auto randf(){
   return dist(rng);
 }
 
-// Copy tensor fields
+/** Copy tensor fields
+ * @param dest Destination field
+ * @param src Source field
+ */
 template<typename T>
 auto copy(T& dest, T& src){
 
@@ -42,7 +49,10 @@ auto copy(T& dest, T& src){
 
 };
 
-// Pointwise magnitude of vector valued functions
+/** Compute pointwise magnitude of vector valued functions
+ * @param u Input vector field
+ * @param u_abs Output magnitude field
+ */
 auto magnitude(tensor::Tensor1 u, fftw_complex* u_abs){
 
   // Loop over array
@@ -54,7 +64,11 @@ auto magnitude(tensor::Tensor1 u, fftw_complex* u_abs){
   
 } 
 
-// L2 norm of vector valued functions over domain
+/** Compute L2 norm of vector valued functions over domain
+ * @param u Input vector field
+ * @param dV Volume element
+ * @return L2 norm
+ */
 auto L2(tensor::Tensor1 u, double dV){
 
   // Initialize
@@ -72,7 +86,10 @@ auto L2(tensor::Tensor1 u, double dV){
 
 } 
 
-// L-infinity norm of vector valued functions over domain
+/** Compute L-infinity norm of vector valued functions over domain
+ * @param u Input vector field
+ * @return L-infinity norm
+ */
 auto Linf(tensor::Tensor1 u){
 
   // Initialize
@@ -89,7 +106,11 @@ auto Linf(tensor::Tensor1 u){
 
 } 
 
-// Generate a plane wave perturbation
+/** Generate a plane wave perturbation
+ * @param u Output field
+ * @param fft Spectral solver object
+ * @return u Updated field
+ */
 auto planeWave(fftw_complex* u, SpectralSolver& fft){
 
   auto wavenumber = fft.wavenumber;
@@ -135,24 +156,31 @@ auto planeWave(fftw_complex* u, SpectralSolver& fft){
 
 }
 
-// Evaluate sum of plane wave perturbations
-auto perturbation(fftw_complex* u, SpectralSolver& fft){
+/** Generate random perturbations
+ * @param u Output field
+ * @param solver Spectral solver object
+ * @return u Updated field
+ */
+auto perturbation(fftw_complex* u, SpectralSolver& solver){
 
   // Get resolution
-  auto N = fft.N;
+  auto N = solver.N;
 
   // Number of perturbations
   auto Npert = 4;
 
   // Add perturbations
-  for(auto n = 0; n < Npert; n++) planeWave(u, fft);
+  for(auto n = 0; n < Npert; n++) planeWave(u, solver);
 
   return u;
 
 }
 
-// Enforce symmetry and unit trace
-auto symmetrize(tensor::Tensor2 Q){
+/** Enforce symmetry and unit trace
+ * @param Q Nematic order parameter
+ * @return Q Updated nematic order parameter
+ */
+auto stabilize(tensor::Tensor2 Q){
 
   #pragma omp parallel for
   for(auto idx = 0; idx < N * N * N; idx++){
@@ -177,4 +205,6 @@ auto symmetrize(tensor::Tensor2 Q){
 
   }
 
+  return Q;
+  
 }

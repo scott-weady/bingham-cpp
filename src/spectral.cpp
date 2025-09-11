@@ -1,6 +1,16 @@
 
 #include <spectral.hpp>
 
+/** Spectral Solver constructor
+ * 
+ * @param N Grid resolution
+ * @param L Domain size
+ * @param p Simulation parameters
+ * @param nthreads Number of OpenMP threads
+ * @return SpectralSolver object
+ * 
+ * Provides methods for FFT, iFFT, gradient, and Helmholtz operator
+ */
 SpectralSolver::SpectralSolver(int N, double L, Params p, int nthreads) : N(N), L(L), p(p) {
 
     fftw_plan_with_nthreads(nthreads);
@@ -37,7 +47,7 @@ SpectralSolver::SpectralSolver(int N, double L, Params p, int nthreads) : N(N), 
 
 }
 
-// Destructor
+/** Destructor */
 SpectralSolver::~SpectralSolver() {
     fftw_destroy_plan(fft3_plan);
     fftw_destroy_plan(ifft3_plan);
@@ -46,17 +56,15 @@ SpectralSolver::~SpectralSolver() {
     delete[] Linv;
 }
 
-/**
- * Forward Fast Fourier Transform
+/** Fast Fourier Transform
  * 
- * Parameters:
- *    u (T) : input field
+ * @param u Input field
+ * @param issymmetric Flag for symmetric input (TO DO: implement)
+ * @return Transformed field in Fourier space
  * 
  * T can be nested std::array (Tensor1, Tensor2, Tensor3) or fftw_complex*
- * 
  * Example usage:
- *    u_h = fft(u);
- * 
+ *   u_h = fft(u);
  */
 template <typename T>
 T& SpectralSolver::fft(T& u, bool issymmetric) {
@@ -65,7 +73,7 @@ T& SpectralSolver::fft(T& u, bool issymmetric) {
         fftw_execute_dft(fft3_plan, u, u);
     }
     else {
-        for (auto& elem : u) fft(elem, issymmetric);  // recurse
+        for (auto& elem : u) fft(elem, issymmetric);  //recurse
     }
     
     return u;
@@ -78,17 +86,15 @@ template tensor::Tensor1& SpectralSolver::fft<tensor::Tensor1>(tensor::Tensor1&,
 template tensor::Tensor2& SpectralSolver::fft<tensor::Tensor2>(tensor::Tensor2&, bool);
 template tensor::Tensor3& SpectralSolver::fft<tensor::Tensor3>(tensor::Tensor3&, bool);
 
-/**
- * Inverse Fast Fourier Transform
+/** Inverse Fast Fourier Transform
  * 
- * Parameters:
- *   u_h (T) : input field in Fourier space
+ * @param u_h Input field in Fourier space
+ * @param issymmetric Flag for symmetric input (TO DO: implement)
+ * @return Transformed field in physical space
  * 
  * T can be nested std::array (Tensor1, Tensor2, Tensor3) or fftw_complex*
- * 
  * Example usage:
  *   u = ifft(u_h);
- * 
  */
 template <typename T>
 T& SpectralSolver::ifft(T& u, bool issymmetric) {
@@ -116,18 +122,15 @@ template tensor::Tensor1& SpectralSolver::ifft<tensor::Tensor1>(tensor::Tensor1&
 template tensor::Tensor2& SpectralSolver::ifft<tensor::Tensor2>(tensor::Tensor2&, bool);
 template tensor::Tensor3& SpectralSolver::ifft<tensor::Tensor3>(tensor::Tensor3&, bool);
 
-/**
- * Gradient operator
+/** Gradient operator
  * 
- * Parameters:
- *   u (T) : input field
- *  Du (T) : output gradient field
- * 
+ * @param u Input field
+ * @param Du Output gradient field
+ * @return Gradient of input field
  * T can be nested std::array (Tensor1, Tensor2, Tensor3) or fftw_complex*
- * 
  * Example usage:
- *  Du = grad(u, Du);
- * 
+ *   Du = grad(u, Du);
+ * Note: Du must be preallocated with correct dimensions
  */
 template <typename TensorIn, typename TensorOut>
 TensorOut& SpectralSolver::grad(TensorIn& u, TensorOut& Du){
@@ -190,17 +193,14 @@ template tensor::Tensor1& SpectralSolver::grad<fftw_complex*, tensor::Tensor1>(f
 template tensor::Tensor2& SpectralSolver::grad<tensor::Tensor1, tensor::Tensor2>(tensor::Tensor1&, tensor::Tensor2&);
 template tensor::Tensor3& SpectralSolver::grad<tensor::Tensor2, tensor::Tensor3>(tensor::Tensor2&, tensor::Tensor3&);
 
-/**
- * Anti-aliasing operator
+/** 2/3 rule for dealiasing
  * 
- * Parameters:
- *   u (T) : input field
+ * @param u Input field
+ * @return Dealiased field
  * 
  * T can be nested std::array (Tensor1, Tensor2, Tensor3) or fftw_complex*
- * 
  * Example usage:
- *  u = antialias(u);
- * 
+ *   u = antialias(u);
  */
 template <typename T>
 T& SpectralSolver::antialias(T& u){
@@ -245,6 +245,15 @@ template tensor::Tensor1& SpectralSolver::antialias<tensor::Tensor1>(tensor::Ten
 template tensor::Tensor2& SpectralSolver::antialias<tensor::Tensor2>(tensor::Tensor2&);
 template tensor::Tensor3& SpectralSolver::antialias<tensor::Tensor3>(tensor::Tensor3&);
 
+/** Helmholtz operator
+ * 
+ * @param D Diffusion coefficient
+ * @param dt Time step
+ * @return Inverse Helmholtz operator in Fourier space
+ * 
+ * Example usage:
+ *   Linv = helmholtzOperator(D, dt);
+ */
 double* SpectralSolver::helmholtzOperator(double D, double dt){
 
     #pragma omp parallel for

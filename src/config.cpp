@@ -1,16 +1,19 @@
 
 #include <config.hpp>
 
+/** Load parameters from a TOML configuration file
+ * @param filename Path to the configuration file
+ * @return Struct containing all parameters
+ */
 Params loadParameters(const std::string& filename) {
 
   auto config = toml::parse_file(filename);
 
   Params p;
   
-  // Resolution (hard code for compiler optimization)
+  // Resolution (NOTE: hard code for compiler optimization)
   p.res.N = 64;
   p.res.Ncheb = 81;
-
   // p.res.N       = config["resolution"]["N"].value_or(64);
   // p.res.Ncheb   = config["resolution"]["Ncheb"].value_or(101);
 

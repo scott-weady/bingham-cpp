@@ -1,29 +1,24 @@
-/******************************************************************************
-*  Apolar active nematic model in 3D
-******************************************************************************/
-
-
-// Dimensionless variables (global scope)
-double L, sigma_a, sigma_b, zeta, dT, dR;
-
-// Grid resolution (global scope)
-int N;
 
 #include <filesystem>
 #include <iostream>
 #include <omp.h>
 #include <string> 
 
+int N; //global variable for grid size
+
 #include <config.hpp>
-
-#include <io.hpp>
-
-#include <nematic.hpp>
 #include <integrators.hpp>
+#include <io.hpp>
+#include <nematic.hpp>
+#include <spectral.hpp>
+#include <tensor.hpp>
 #include <utils.hpp>
 
-
 int main(int argc, char** argv) {
+
+  //************************************************************
+  //  Parse inputs and load parameters
+  //************************************************************
 
   auto nthreads = omp_get_max_threads();
 
@@ -36,6 +31,8 @@ int main(int argc, char** argv) {
   // Check if resume, otherwise start from new initial condition
   auto resume = false;
   if(argc == 3) resume = (bool) atoi(argv[2]);
+
+  auto p = loadParameters("params.toml");
 
   //************************************************************
   //  Set up io
@@ -69,51 +66,27 @@ int main(int argc, char** argv) {
   auto timeStepLog = results + "/timeStepInfo.txt";
 
   //************************************************************ 
-  //  Load parameters
+  //  Set up spectral solver
   //************************************************************ 
 
-  auto p = loadParameters("params.toml");
+  N = p.res.N; //grid size
+  auto L = p.dim.L; //box size
+  auto dV = (L * L * L) / (N * N * N); //volume element
 
-  // Interpolant resolution
-  auto Ncheb = p.res.Ncheb;
+  std::cout << "Preparing FFT..." << '\n';
+  SpectralSolver solver(N, L, p, nthreads);
+
+  //************************************************************ 
+  //  Set up time stepping
+  //************************************************************ 
 
   // Assign time stepping parameters
   auto t0 = p.time.t0;
   auto tf = p.time.tf;
   auto tplt = p.time.tplt;
   auto tsave = p.time.tsave;
-
   auto dt_max = p.time.dt_max;
   auto dt = dt_max, dtm1 = dt_max;
-    
-  // Grid resolution
-  N = p.res.N;
-
-  // Box size
-  L = p.dim.L;
-
-  // Stress and alignment coefficients
-  sigma_a = p.dim.sigma_a;
-  sigma_b = p.dim.sigma_b;
-  zeta = p.dim.zeta;
-  
-  // Diffusion coefficients
-  dT = p.dim.dT;
-  dR = p.dim.dR;
-
-  // Volume differential
-  auto dV = (L * L * L) / (N * N * N);
-
-  //************************************************************ 
-  //  Set up FFT
-  //************************************************************ 
-
-  std::cout << "Preparing FFT..." << '\n';
-  SpectralSolver solver(N, L, p, nthreads);
-
-  //************************************************************ 
-  //  Set up temporal integrator
-  //************************************************************ 
 
   // Time stepping counters
   auto Nt = (int) std::floor((tf - t0) / dt + 0.1); //number of time steps
@@ -151,7 +124,7 @@ int main(int argc, char** argv) {
 
   auto Sigma = tensor::zeros2(N);
 
-  auto ST = BinghamClosure(Ncheb, N, zeta);
+  auto ST = BinghamClosure(N, p);
 
   //************************************************************ 
   //  Function captures (note these overwrite variables in place)
@@ -159,21 +132,21 @@ int main(int argc, char** argv) {
 
   // Closure for computing the fluid velocity
   auto updateVelocity = [&]() {
-    fluidSolver(u, Du, Q, Sigma, ST, up1, solver);
+    fluidSolver(u, Du, Q, Sigma, ST, up1, solver, p);
     return u;
   };
 
   // Function for evaluating all nonlinear terms
   auto updateNonlinearity = [&]() {
     updateVelocity(); //velocity
-    evaluateNonlinearity(F, u, Du, Q, DQ, ST, solver); //nonlinear terms
+    evaluateNonlinearity(F, u, Du, Q, DQ, ST, solver, p); //nonlinear terms
     return F;
   };
 
   auto updateQ = [&](double dt, double dtm1) {
     updateNonlinearity(); //nonlinear terms
     sbdf2(Q, Qm1, F, Fm1, dt, dtm1, solver, true); //take a time step
-    symmetrize(Q); //enforce trace condition and symmetry
+    stabilize(Q); //enforce trace condition and symmetry
   };
 
   auto plot = [&]() {
@@ -196,12 +169,8 @@ int main(int argc, char** argv) {
 
   initialCondition(Q, resume, solver);
 
-  plot();
-  save();
-
-  // Update file counter
-  nplt++;
-  nsave++;
+  plot(); nplt++;
+  save(); nsave++;
 
   std::cout << "Initialization complete, starting main loop..." << '\n';
 
@@ -209,27 +178,16 @@ int main(int argc, char** argv) {
   //  Euler step to initialize multistep method
   //************************************************************
 
-  // Start loop timer
-  loopTimer = omp_get_wtime();
-  
-  // Evaluate nonlinear terms 
-  updateNonlinearity();
+  loopTimer = omp_get_wtime(); //start timer
+  updateNonlinearity(); //evaluate nonlinear terms
+  copy(Qm1, Q); copy(Fm1, F); //store for multistep method
+  euler(Q, F, dt, solver, true); //take first step with euler
+  stabilize(Q); //enforce trace condition and symmetry
+  loopTimer -= omp_get_wtime(); //stop timer
 
-  // Store previous step for multistep method
-  copy(Qm1, Q); copy(Fm1, F);
-  
-  // Take first time step with Euler method
-  euler(Q, F, dt, solver, true);
-  symmetrize(Q); //enforce trace condition and symmetry
+  printTimestepInfo(timeStepLog, t, dt, u, dV, -loopTimer); //write time step info
 
-  // Time loop
-  loopTimer -= omp_get_wtime();
-
-  // Write time step information to file
-  printTimestepInfo(timeStepLog, t, dt, u, dV, -loopTimer);
-
-  // Update time
-  t += dt;
+  t += dt; //update time
 
   //************************************************************ 
   //  Main loop 
@@ -237,17 +195,10 @@ int main(int argc, char** argv) {
 
   while(t < tf){ 
 
-    // Start loop timer
-    loopTimer = omp_get_wtime(); 
-
-    // Take a time step
-    updateQ(dt, dtm1);
-
-    // Update time
-    t += dt;
-
-    // Stop loop timer
-    loopTimer -= omp_get_wtime();
+    loopTimer = omp_get_wtime(); //start timer
+    updateQ(dt, dtm1); //take a time step
+    loopTimer -= omp_get_wtime(); //stop timer
+    t += dt; //update time
 
     // End simulation if unstable
     if(std::isnan(Q[0][0][0][0])){
@@ -255,34 +206,29 @@ int main(int argc, char** argv) {
       return 0;  
     }
 
-    // Write time step information to file
-    printTimestepInfo(timeStepLog, t, dt, u, dV, -loopTimer);
+    printTimestepInfo(timeStepLog, t, dt, u, dV, -loopTimer); //write time step info
 
     // Low resolution file save
     if(t - lastTimePlotted == tplt){
-      plot();
+      plot(); nplt++;
       lastTimePlotted = t;
-      nplt++;
     }
 
     // High resolution file save
     if(t - lastTimeSaved == tsave){
-      save();
+      save(); nsave++;
       lastTimeSaved = t;
-      nsave++;
     }
 
-    // Update time step through CFL condition
-    dtm1 = dt;
-    dt = std::min(0.375 * L / (Linf(u) * N), dt_max);
+    dtm1 = dt; //store previous time step
+    dt = std::min(0.375 * L / (Linf(u) * N), dt_max); //CFL condition
 
-    if(t + dt > lastTimePlotted + tplt) dt = lastTimePlotted + tplt - t; // Ensure we plot on time
-    if(t + dt > lastTimeSaved + tsave) dt = lastTimeSaved + tsave - t; // Ensure we save on time
-    if(t + dt > lastTimePlotted + tf) dt = lastTimePlotted + tf - t; // Ensure we plot at final time
+    if(t + dt > lastTimePlotted + tplt) dt = lastTimePlotted + tplt - t; //ensure we plot on time
+    if(t + dt > lastTimeSaved + tsave) dt = lastTimeSaved + tsave - t; //ensure we save on time
+    if(t + dt > lastTimePlotted + tf) dt = lastTimePlotted + tf - t; //ensure we plot at final time
   
   }
 
-  // Clean up
   return 0;
 
 }

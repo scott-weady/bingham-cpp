@@ -1,6 +1,7 @@
 
 #include <tensor.hpp>
 
+/** Tensor initialization */
 fftw_complex* tensor::zeros(int N) {
     auto arr = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * N * N * N);
     std::memset(arr, 0, sizeof(fftw_complex) * N * N * N);

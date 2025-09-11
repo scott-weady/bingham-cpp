@@ -5,6 +5,7 @@
 #include <cstring>
 #include <fftw3.h>
 
+/** Tensor namespace */
 namespace tensor{
         
     // Define tensor types

@@ -3,18 +3,26 @@
 
 #include <iostream>
 #include <string>
-#include <tensor.hpp>
 #include <type_traits>
+
+#include <tensor.hpp>
 #include <utils.hpp>
 
-
-// Create directory
+/** Create directory
+ * @param foldername Name of directory to create
+ */
 auto createFolder(std::string foldername){
   auto message = "mkdir " + foldername;
   return system(message.c_str());
 }
 
-// Save field to output directory
+/** Save field to output directory
+ * @param outputDir Output directory
+ * @param name Name of the field
+ * @param nsave Save index
+ * @param field Field data
+ * @param precision Floating point precision
+ */
 template <typename T>
 auto saveField(const std::string& outputDir, const std::string& name, int nsave, T& field,int precision){
 
@@ -44,16 +52,23 @@ auto saveField(const std::string& outputDir, const std::string& name, int nsave,
 
 }
 
-// Print timestep information to console and file
+/** Print timestep information to console and file
+ * @param timeStepLog Log file path
+ * @param t Current time
+ * @param dt Time step
+ * @param u Velocity field
+ * @param dV Volume element
+ * @param loopTimer Loop time
+ */
 auto printTimestepInfo(std::string timeStepLog, double t, double dt, tensor::Tensor1 u, double dV, double loopTimer) {
 
   std::ofstream wf(timeStepLog, std::ios::out | std::ios::app);
   std::ostringstream msg;
-  
+
   msg << "           t = " << t << '\n'
-      << "          dt = " << dt << '\n'
-      << "     ||U||_2 = " << L2(u, dV) << '\n'
-      << "   ||U||_inf = " << Linf(u) << '\n'
+      << "          t = " << dt << '\n'
+      << "     ||U||₂ = " << L2(u, dV) << '\n'
+      << "   ||U||∞ = " << Linf(u) << '\n'
       << "        loop = " << loopTimer << "s\n"
       << "---------------------------\n";
 

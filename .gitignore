@@ -3,3 +3,4 @@ build
 jobs
 results
 .vscode
+*.out
