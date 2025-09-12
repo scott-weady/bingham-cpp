@@ -31,7 +31,7 @@ public:
         C11 = load("include/bingham_coeffs/C11.dat");
         C12 = load("include/bingham_coeffs/C12.dat");
         C22 = load("include/bingham_coeffs/C22.dat");
-        ST = tensor::zeros2(N);
+        ST = tensor::zeros2(N, true); //symmetric
 
     }
 

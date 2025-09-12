@@ -59,7 +59,6 @@ SpectralSolver::~SpectralSolver() {
 /** Fast Fourier Transform
  * 
  * @param u Input field
- * @param issymmetric Flag for symmetric input (TO DO: implement)
  * @return Transformed field in Fourier space
  * 
  * T can be nested std::array (Tensor1, Tensor2, Tensor3) or fftw_complex*
@@ -67,29 +66,23 @@ SpectralSolver::~SpectralSolver() {
  *   u_h = fft(u);
  */
 template <typename T>
-T& SpectralSolver::fft(T& u, bool issymmetric) {
-
-    if constexpr (std::is_same_v<T, fftw_complex*>){
-        fftw_execute_dft(fft3_plan, u, u);
-    }
-    else {
-        for (auto& elem : u) fft(elem, issymmetric);  //recurse
-    }
-    
+T& SpectralSolver::fft(T& u) {
+    // Get unique pointers to avoid redundant transforms
+    auto ptrs = tensor::collect_pointers(u);
+    for (auto ptr : ptrs) fftw_execute_dft(fft3_plan, ptr, ptr);
     return u;
 
 }
 
 // Instantiate template for types used
-template fftw_complex*& SpectralSolver::fft<fftw_complex*>(fftw_complex*&, bool);
-template tensor::Tensor1& SpectralSolver::fft<tensor::Tensor1>(tensor::Tensor1&, bool);
-template tensor::Tensor2& SpectralSolver::fft<tensor::Tensor2>(tensor::Tensor2&, bool);
-template tensor::Tensor3& SpectralSolver::fft<tensor::Tensor3>(tensor::Tensor3&, bool);
+template fftw_complex*& SpectralSolver::fft<fftw_complex*>(fftw_complex*&);
+template tensor::Tensor1& SpectralSolver::fft<tensor::Tensor1>(tensor::Tensor1&);
+template tensor::Tensor2& SpectralSolver::fft<tensor::Tensor2>(tensor::Tensor2&);
+template tensor::Tensor3& SpectralSolver::fft<tensor::Tensor3>(tensor::Tensor3&);
 
 /** Inverse Fast Fourier Transform
  * 
  * @param u_h Input field in Fourier space
- * @param issymmetric Flag for symmetric input (TO DO: implement)
  * @return Transformed field in physical space
  * 
  * T can be nested std::array (Tensor1, Tensor2, Tensor3) or fftw_complex*
@@ -97,30 +90,31 @@ template tensor::Tensor3& SpectralSolver::fft<tensor::Tensor3>(tensor::Tensor3&,
  *   u = ifft(u_h);
  */
 template <typename T>
-T& SpectralSolver::ifft(T& u, bool issymmetric) {
+T& SpectralSolver::ifft(T& u) {
 
-    if constexpr (std::is_same_v<T, fftw_complex*>){
-        fftw_execute_dft(ifft3_plan, u, u);
+    // Get unique pointers to avoid redundant transforms
+    auto ptrs = tensor::collect_pointers(u);
+
+    // Loop over all pointers and apply ifft
+    for (auto ptr : ptrs) {
+        fftw_execute_dft(ifft3_plan, ptr, ptr);
         // Normalize
         #pragma omp parallel for
         for(auto idx = 0; idx < N * N * N; idx++){
-            u[idx][0] /= (N * N * N);
-            u[idx][1] /= (N * N * N);
+            ptr[idx][0] /= (N * N * N);
+            ptr[idx][1] /= (N * N * N);
         }
     }
-    else {
-        for (auto& elem : u) ifft(elem, issymmetric);  // recurse
-    }
-    
+
     return u;
 
 }
 
 // Instantiate template for types used
-template fftw_complex*& SpectralSolver::ifft<fftw_complex*>(fftw_complex*&, bool);
-template tensor::Tensor1& SpectralSolver::ifft<tensor::Tensor1>(tensor::Tensor1&, bool);
-template tensor::Tensor2& SpectralSolver::ifft<tensor::Tensor2>(tensor::Tensor2&, bool);
-template tensor::Tensor3& SpectralSolver::ifft<tensor::Tensor3>(tensor::Tensor3&, bool);
+template fftw_complex*& SpectralSolver::ifft<fftw_complex*>(fftw_complex*&);
+template tensor::Tensor1& SpectralSolver::ifft<tensor::Tensor1>(tensor::Tensor1&);
+template tensor::Tensor2& SpectralSolver::ifft<tensor::Tensor2>(tensor::Tensor2&);
+template tensor::Tensor3& SpectralSolver::ifft<tensor::Tensor3>(tensor::Tensor3&);
 
 /** Gradient operator
  * 
@@ -205,34 +199,36 @@ template tensor::Tensor3& SpectralSolver::grad<tensor::Tensor2, tensor::Tensor3>
 template <typename T>
 T& SpectralSolver::antialias(T& u){
 
-    if constexpr (std::is_same_v<T, fftw_complex*>) {
+    // Get unique pointers to avoid redundant transforms
+    auto ptrs = tensor::collect_pointers(u);
 
-    auto u_h = fft(u);
+    // Loop over all pointers and apply ifft
+    for (auto ptr : ptrs) {
 
-    // Loop over all points
-    #pragma omp parallel for
-    for(auto nx = 0; nx < N; nx++){
-        auto k1 = wavenumber[nx];
-        for(auto ny = 0; ny < N; ny++){
-            auto k2 = wavenumber[ny];
-            for(auto nz = 0; nz < N; nz++){
-                auto k3 = wavenumber[nz];
+        fft(ptr);
 
-                if(std::abs(k1) > (2.0 / 3.0) * kmax || std::abs(k2) > (2.0 / 3.0) * kmax || std::abs(k3) > (2.0 / 3.0) * kmax){
-                    auto idx = nz + N * ny + N * N * nx;
-                    u_h[idx][0] = 0;
-                    u_h[idx][1] = 0;
+        // Loop over all points
+        #pragma omp parallel for
+        for(auto nx = 0; nx < N; nx++){
+            auto k1 = wavenumber[nx];
+            for(auto ny = 0; ny < N; ny++){
+                auto k2 = wavenumber[ny];
+                for(auto nz = 0; nz < N; nz++){
+                    auto k3 = wavenumber[nz];
+
+                    if(std::abs(k1) > (2.0 / 3.0) * kmax || std::abs(k2) > (2.0 / 3.0) * kmax || std::abs(k3) > (2.0 / 3.0) * kmax){
+                        auto idx = nz + N * ny + N * N * nx;
+                        ptr[idx][0] = 0;
+                        ptr[idx][1] = 0;
+                    }
+
                 }
-
             }
         }
-    }
 
-    // Inverse transform
-    u = ifft(u_h);
+        // Inverse transform
+        ifft(ptr);
 
-    } else {
-        for (auto& elem : u) elem = antialias(elem);
     }
 
     return u;

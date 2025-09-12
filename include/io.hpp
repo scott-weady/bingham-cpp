@@ -65,11 +65,11 @@ auto printTimestepInfo(std::string timeStepLog, double t, double dt, tensor::Ten
   std::ofstream wf(timeStepLog, std::ios::out | std::ios::app);
   std::ostringstream msg;
 
-  msg << "           t = " << t << '\n'
-      << "          t = " << dt << '\n'
-      << "     ||U||₂ = " << L2(u, dV) << '\n'
-      << "   ||U||∞ = " << Linf(u) << '\n'
-      << "        loop = " << loopTimer << "s\n"
+  msg << "      t = " << t << '\n'
+      << "     dt = " << dt << '\n'
+      << " ||U||₂ = " << L2(u, dV) << '\n'
+      << " ||U||∞ = " << Linf(u) << '\n'
+      << "   loop = " << loopTimer << "s\n"
       << "---------------------------\n";
 
   // Send to console and file

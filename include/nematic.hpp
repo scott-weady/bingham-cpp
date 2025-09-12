@@ -6,6 +6,7 @@
 #include <spectral.hpp>
 #include <tensor.hpp>
 #include <utils.hpp>
+#include <iomanip>
 
 /** Evaluate nonlinearity term in Q-tensor equation 
  * F = -u . grad Q + (grad u)^T . Q + Q . (grad u) - 2 S:T + 4 zeta Q.Q - 6 dR (Q - I/3)
@@ -32,12 +33,12 @@ auto evaluateNonlinearity(tensor::Tensor2 F, tensor::Tensor1 u, tensor::Tensor2 
   // Main loop 
   #pragma omp parallel for 
   for(auto i = 0; i < 3; i++){ 
-    for(auto j = 0; j < 3; j++){ 
+    for(auto j = i; j < 3; j++){ 
       for(auto idx = 0; idx < N * N * N; idx++){ 
 
         auto u_dot_DQ = 0.0; 
-        for(auto k = 0; k < 3; k++) u_dot_DQ += u[k][idx][0] * DQ[i][j][k][idx][0]; 
-        
+        for(auto k = 0; k < 3; k++) u_dot_DQ += u[k][idx][0] * DQ[i][j][k][idx][0];
+
         auto QQ = 0.0; 
         for(auto k = 0; k < 3; k++) QQ += Q[i][k][idx][0] * Q[k][j][idx][0]; 
 
@@ -49,6 +50,7 @@ auto evaluateNonlinearity(tensor::Tensor2 F, tensor::Tensor1 u, tensor::Tensor2 
       }
     } 
   }
+
 
   solver.antialias(F); //dealiasing
   return F;
@@ -66,7 +68,7 @@ auto StokesSolver(tensor::Tensor1 u, tensor::Tensor2 Sigma, SpectralSolver& solv
 
   // Compute Fourier transform
   auto u_h = solver.fft(u);
-  auto Sigma_h = solver.fft(Sigma, true); //true indicates tensor is symmetric
+  auto Sigma_h = solver.fft(Sigma); //true indicates tensor is symmetric
   auto wavenumber = solver.wavenumber;
 
   #pragma omp parallel for
@@ -132,7 +134,7 @@ auto StokesSolver(tensor::Tensor1 u, tensor::Tensor2 Sigma, SpectralSolver& solv
 
   // Convert to real space
   u = solver.ifft(u_h);
-  Sigma = solver.ifft(Sigma_h, true);
+  Sigma = solver.ifft(Sigma_h);
 
   return u;
 
@@ -155,7 +157,7 @@ auto stressTensor(tensor::Tensor2 Sigma, tensor::Tensor2 Q, tensor::Tensor2 ST, 
 
   #pragma omp parallel for
   for(auto i = 0; i < 3; i++){
-    for(auto j = 0; j < 3; j++){
+    for(auto j = i; j < 3; j++){
       for(auto idx = 0; idx < N * N * N; idx++){
 
         auto QQ = 0.0;
@@ -194,14 +196,14 @@ auto fluidSolver(tensor::Tensor1 u, tensor::Tensor2 Du, tensor::Tensor2 Q, tenso
   // Compute unconstrained stress Sigma = sigma_a * Q
   #pragma omp parallel for
   for (auto i = 0; i < 3; i++){
-    for(auto j = 0; j < 3; j++){
+    for(auto j = i; j < 3; j++){
       for(auto idx = 0; idx < N * N * N; idx++) Sigma[i][j][idx][0] = sigma_a * Q[i][j][idx][0];
     }
   }
 
   // Solve for velocity field with unconstrained stress
   StokesSolver(u, Sigma, solver);
-
+  
   if(sigma_b == 0) return u; //no need to iterate if sigma_b = 0
   
   // Set initial iteration counter
@@ -312,7 +314,7 @@ auto initialCondition(tensor::Tensor2 Q, bool resume, SpectralSolver& solver){
       
     if(!resume) throw std::runtime_error("No initial data requested.");
 
-    std::ifstream Q_init("initial_data/Q/Q.dat");
+    std::ifstream Q_init("initial_data/Q.dat");
     if(!Q_init) throw std::runtime_error("No initial data found.");
 
     std::cout << "Initial data found! Loading Q..." << '\n';

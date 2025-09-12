@@ -37,11 +37,11 @@ class SpectralSolver {
 
     // Forward FFT
     template <typename T>
-    T& fft(T& u, bool=false);
+    T& fft(T& u);
 
     // Inverse FFT
     template <typename T>
-    T& ifft(T& u_h, bool=false);
+    T& ifft(T& u_h);
 
     // 2/3 rule for dealiasing
     template <typename T>

@@ -115,14 +115,14 @@ int main(int argc, char** argv) {
   auto up1 = tensor::zeros1(N);
   auto Du = tensor::zeros2(N);
 
-  auto Q = tensor::zeros2(N);
-  auto Qm1 = tensor::zeros2(N);
-  auto DQ = tensor::zeros3(N);
+  auto Q = tensor::zeros2(N, true); //symmetric
+  auto Qm1 = tensor::zeros2(N, true); //symmetric
+  auto DQ = tensor::zeros3(N, true); //symmetric
 
-  auto F = tensor::zeros2(N);
-  auto Fm1 = tensor::zeros2(N);
+  auto F = tensor::zeros2(N, true); //symmetric
+  auto Fm1 = tensor::zeros2(N, true); //symmetric
 
-  auto Sigma = tensor::zeros2(N);
+  auto Sigma = tensor::zeros2(N, true); //symmetric
 
   auto ST = BinghamClosure(N, p);
 
@@ -145,7 +145,7 @@ int main(int argc, char** argv) {
 
   auto updateQ = [&](double dt, double dtm1) {
     updateNonlinearity(); //nonlinear terms
-    sbdf2(Q, Qm1, F, Fm1, dt, dtm1, solver, true); //take a time step
+    sbdf2(Q, Qm1, F, Fm1, dt, dtm1, solver); //take a time step
     stabilize(Q); //enforce trace condition and symmetry
   };
 
@@ -180,8 +180,9 @@ int main(int argc, char** argv) {
 
   loopTimer = omp_get_wtime(); //start timer
   updateNonlinearity(); //evaluate nonlinear terms
+  
   copy(Qm1, Q); copy(Fm1, F); //store for multistep method
-  euler(Q, F, dt, solver, true); //take first step with euler
+  euler(Q, F, dt, solver); //take first step with euler
   stabilize(Q); //enforce trace condition and symmetry
   loopTimer -= omp_get_wtime(); //stop timer
 

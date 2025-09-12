@@ -22,13 +22,13 @@ Params loadParameters(const std::string& filename) {
   p.dim.sigma_a = config["dimensionless"]["sigma_a"].value_or(-1.0);
   p.dim.sigma_b = config["dimensionless"]["sigma_b"].value_or(0.0);
   p.dim.zeta    = config["dimensionless"]["zeta"].value_or(0.0);
-  p.dim.dT      = config["dimensionless"]["dT"].value_or(1e-3);
+  p.dim.dT      = config["dimensionless"]["dT"].value_or(1e-4);
   p.dim.dR      = config["dimensionless"]["dR"].value_or(0.0);
 
   // Time
   p.time.t0     = config["time"]["t0"].value_or(0.0);
-  p.time.tf     = config["time"]["tf"].value_or(200.0);
-  p.time.dt_max = config["time"]["dt"].value_or(0.1);
+  p.time.tf     = config["time"]["tf"].value_or(150.0);
+  p.time.dt_max = config["time"]["dt"].value_or(0.5);
   p.time.tplt   = config["time"]["tplt"].value_or(1.0);
   p.time.tsave  = config["time"]["tsave"].value_or(5.0);
 
